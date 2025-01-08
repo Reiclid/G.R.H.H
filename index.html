@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+    <title>3D Game</title>
+</head>
+<body>
+    <div id="fps">FPS: 0</div>
+
+    <canvas id="myCanvas"></canvas>
+
+    <script type="module" src="main.js"></script>
+
+    <script>
+      const fpsDisplay = document.getElementById('fps');
+      let lastFrameTime = performance.now(); // Час попереднього кадру
+      let frameCount = 0; // Лічильник кадрів
+      let fps = 0; // Змінна для збереження FPS
+  
+      function calculateFPS() {
+        const currentTime = performance.now(); // Поточний час
+        frameCount++;
+  
+        // Якщо пройшла 1 секунда
+        if (currentTime - lastFrameTime >= 1000) {
+          fps = frameCount;
+          frameCount = 0; // Скинути лічильник кадрів
+          lastFrameTime = currentTime; // Оновити час
+          fpsDisplay.textContent = `FPS: ${fps}`; // Вивести FPS
+        }
+  
+        requestAnimationFrame(calculateFPS); // Запустити наступний кадр
+      }
+  
+      calculateFPS(); // Запустити функцію
+    </script>
+</body>
+</html>
