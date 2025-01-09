@@ -18,7 +18,7 @@ class ClassPlayer {
         this.y = y;
         this.width = width;
         this.height = height;
-        this.speed = 1000;
+        this.speed = 500;
         this.maxVelocity = 10;
     }
 
@@ -103,7 +103,7 @@ class ClassObj {
     }
 }
 
-class ClassEmpty {
+class Enemy {
     constructor(x, y, width, height){
         this.x = x;
         this.y = y;
@@ -133,7 +133,7 @@ class ClassLight {
         worldObjects.push(this);
     }
     
-    draw(ctx, camera, playerAngle, player, debug = true) {
+    draw(ctx, camera, playerAngle, player, worldObjects, debug = true) {
         ctx.save();
 
         // Визначаємо центр світла
@@ -150,8 +150,25 @@ class ClassLight {
             const sinAngle = Math.sin(currentAngle);
             const cosAngle = Math.cos(currentAngle);
 
-            const endX = centerX + cosAngle * this.range;
-            const endY = centerY + sinAngle * this.range;
+            // Початкова довжина променя
+            let beamRange = this.range;
+
+            // Перевірка зіткнення променя з об'єктами
+            for (const obj of worldObjects) {
+                if (obj instanceof ClassObj || obj instanceof Enemy) {
+                    const collisionPoint = this.checkRayCollision(
+                        centerX, centerY, cosAngle, sinAngle, obj, camera
+                    );
+
+                    if (collisionPoint) {
+                        const distance = Math.hypot(collisionPoint.x - centerX, collisionPoint.y - centerY);
+                        beamRange = Math.min(beamRange, distance);
+                    }
+                }
+            }
+
+            const endX = centerX + cosAngle * beamRange;
+            const endY = centerY + sinAngle * beamRange;
 
             if (debug) {
                 ctx.strokeStyle = `rgba(255, 251, 0, ${this.intensity})`;
@@ -165,26 +182,100 @@ class ClassLight {
         ctx.restore();
     }
 
-    getLightPolygon(player, playerAngle, camera, canvas) {
+    checkRayCollision(startX, startY, cosAngle, sinAngle, obj, camera) {
+        const objLeft = obj.x - camera.x;
+        const objRight = obj.x + obj.width - camera.x;
+        const objTop = obj.y - camera.y;
+        const objBottom = obj.y + obj.height - camera.y;
+    
+        const intersections = [];
+    
+        // Перевірка перетину з верхньою стороною
+        if (sinAngle !== 0) {
+            const y = objTop;
+            const t = (y - startY) / sinAngle;
+            const x = startX + t * cosAngle;
+            if (t > 0 && x >= objLeft && x <= objRight) {
+                intersections.push({ x, y });
+            }
+        }
+    
+        // Перевірка перетину з нижньою стороною
+        if (sinAngle !== 0) {
+            const y = objBottom;
+            const t = (y - startY) / sinAngle;
+            const x = startX + t * cosAngle;
+            if (t > 0 && x >= objLeft && x <= objRight) {
+                intersections.push({ x, y });
+            }
+        }
+    
+        // Перевірка перетину з лівою стороною
+        if (cosAngle !== 0) {
+            const x = objLeft;
+            const t = (x - startX) / cosAngle;
+            const y = startY + t * sinAngle;
+            if (t > 0 && y >= objTop && y <= objBottom) {
+                intersections.push({ x, y });
+            }
+        }
+    
+        // Перевірка перетину з правою стороною
+        if (cosAngle !== 0) {
+            const x = objRight;
+            const t = (x - startX) / cosAngle;
+            const y = startY + t * sinAngle;
+            if (t > 0 && y >= objTop && y <= objBottom) {
+                intersections.push({ x, y });
+            }
+        }
+    
+        // Повертаємо найближчу точку перетину
+        if (intersections.length > 0) {
+            return intersections.reduce((nearest, point) => {
+                const distance = Math.hypot(point.x - startX, point.y - startY);
+                const nearestDistance = Math.hypot(nearest.x - startX, nearest.y - startY);
+                return distance < nearestDistance ? point : nearest;
+            });
+        }
+    
+        return null;
+    }
+
+    getLightPolygon(player, playerAngle, camera, canvas, worldObjects) {
         const centerX = this.onplayer ? canvas.width / 2 : this.x - camera.x;
         const centerY = this.onplayer ? canvas.height / 2 : this.y - camera.y;
-
+    
         const halfFov = this.fov / 2;
         const angleStart = (this.angle - halfFov) + (this.onplayer ? playerAngle : 0);
         const angleEnd = angleStart + this.fov;
-
+    
         const polygon = [{ x: centerX, y: centerY }];
-
+    
         for (let currentAngle = angleStart; currentAngle <= angleEnd; currentAngle += this.fov / this.beamCount) {
             const sinAngle = Math.sin(currentAngle);
             const cosAngle = Math.cos(currentAngle);
-
+    
+            let beamRange = this.range;
+    
+            // Перевіряємо зіткнення з об'єктами для кожного променя
+            for (const obj of worldObjects) {
+                if (obj instanceof ClassObj || obj instanceof Enemy) {
+                    const collisionPoint = this.checkRayCollision(centerX, centerY, cosAngle, sinAngle, obj, camera);
+    
+                    if (collisionPoint) {
+                        const distance = Math.hypot(collisionPoint.x - centerX, collisionPoint.y - centerY);
+                        beamRange = Math.min(beamRange, distance); // Обрізаємо промінь до найближчого зіткнення
+                    }
+                }
+            }
+    
             polygon.push({
-                x: centerX + cosAngle * this.range,
-                y: centerY + sinAngle * this.range,
+                x: centerX + cosAngle * beamRange,
+                y: centerY + sinAngle * beamRange,
             });
         }
-
+    
         return polygon;
     }
 }
@@ -208,15 +299,51 @@ class ClassDark {
     }
 
     checkCollision(lightPolygon) {
+        // Перевірка: чи перетинає полігон світла полігон темряви
+        return this.isPolygonInside(lightPolygon) || this.isPolygonOutside(lightPolygon);
+    }
+    
+    isPolygonInside(lightPolygon) {
+        // Перевіряємо, чи хоча б одна точка полігону світла всередині темряви
+        for (const point of lightPolygon) {
+            if (
+                point.x >= this.x &&
+                point.x <= this.x + this.width &&
+                point.y >= this.y &&
+                point.y <= this.y + this.height
+            ) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    isPolygonOutside(lightPolygon) {
+        // Перевіряємо, чи всі вершини темряви перекриваються полігоном світла
         const corners = [
             { x: this.x, y: this.y },
             { x: this.x + this.width, y: this.y },
             { x: this.x + this.width, y: this.y + this.height },
             { x: this.x, y: this.y + this.height },
         ];
-
-        // Перевірка перетину полігону світла з полігоном темряви (SAT)
-        return this.satCollision(corners, lightPolygon);
+    
+        for (const corner of corners) {
+            let inside = false;
+            for (let i = 0; i < lightPolygon.length; i++) {
+                const p1 = lightPolygon[i];
+                const p2 = lightPolygon[(i + 1) % lightPolygon.length];
+    
+                const intersect = (corner.y > p1.y) !== (corner.y > p2.y) &&
+                    corner.x < ((p2.x - p1.x) * (corner.y - p1.y)) / (p2.y - p1.y) + p1.x;
+                if (intersect) {
+                    inside = !inside;
+                }
+            }
+            if (!inside) {
+                return false;
+            }
+        }
+        return true;
     }
 
     satCollision(polygon1, polygon2) {
@@ -232,7 +359,7 @@ class ClassDark {
             }
             return axes;
         };
-
+    
         const projectPolygon = (polygon, axis) => {
             let min = Infinity;
             let max = -Infinity;
@@ -243,19 +370,19 @@ class ClassDark {
             }
             return { min, max };
         };
-
+    
         const overlap = (projection1, projection2) =>
             !(projection1.max < projection2.min || projection2.max < projection1.min);
-
+    
         const axes1 = getAxes(polygon1);
         const axes2 = getAxes(polygon2);
-
+    
         for (const axis of [...axes1, ...axes2]) {
             const projection1 = projectPolygon(polygon1, axis);
             const projection2 = projectPolygon(polygon2, axis);
             if (!overlap(projection1, projection2)) return false;
         }
-
+    
         return true;
     }
 
@@ -268,7 +395,7 @@ class Game {
         this.canvas.width = 1920;
         this.canvas.height = 1080;
 
-        this.player = new ClassPlayer(0, 0, 200, 100);
+        this.player = new ClassPlayer(0, 0, 60, 40);
         this.camera = { x: 0, y: 0 };
         this.keys = { up: false, down: false, left: false, right: false };
 
@@ -310,7 +437,7 @@ class Game {
     }
 
     createDarkField() {
-        const squareSize = 15;
+        const squareSize = 10;
         for (let x = 0; x < this.canvas.width; x += squareSize) {
             for (let y = 0; y < this.canvas.height; y += squareSize) {
                 new ClassDark(x, y, squareSize, squareSize, this.worldDarkLight);
@@ -329,31 +456,32 @@ class Game {
 
         const lightPolygons = this.worldObjects
             .filter((obj) => obj instanceof ClassLight)
-            .map((light) => light.getLightPolygon(this.player, playerAngle, this.camera, this.canvas));
+            .map((light) => light.getLightPolygon(this.player, playerAngle, this.camera, this.canvas, this.worldObjects));
+
 
         
 
         for (const obj of this.worldObjects) {
-            obj.draw(this.ctx, this.camera, playerAngle, this.player);
+            obj.draw(this.ctx, this.camera, playerAngle, this.player, this.worldObjects);
         }
 
         for (const dark of this.worldDarkLight) {
             let affectedByLight = false;
-    
+        
             for (const lightPolygon of lightPolygons) {
                 if (dark.checkCollision(lightPolygon)) {
-                    dark.strength -= 20 * deltaTime;
+                    dark.strength -= 30 * deltaTime;
                     dark.strength = Math.max(0, dark.strength);
                     affectedByLight = true;
                     break;
                 }
             }
-    
+        
             if (!affectedByLight) {
-                dark.strength += 10 * deltaTime;
+                dark.strength += 20 * deltaTime;
                 dark.strength = Math.min(1, dark.strength);
             }
-    
+        
             dark.draw(this.ctx, this.camera);
         }
 
@@ -367,15 +495,32 @@ class Game {
 
         new ClassObj(100, 100, 50, 50, this.worldObjects);
 
+        new ClassObj(500, 100, 10, 10, this.worldObjects);
+
+        new ClassObj(200, 800, 1000, 10, this.worldObjects);
+
+
         // Створення світла, прикріпленого до гравця
         new ClassLight(
             0,                  // Початкова X-координата (ігнорується, якщо onplayer = true)
             0,                  // Початкова Y-координата (ігнорується, якщо onplayer = true)
             0,
-            500,                // Радіус світла
-            1,                  // Сила світла (від 0 до 1)
-            20,                 // Кількість променів
+            1000,                // Радіус світла
+            0.1,                  // Сила світла (від 0 до 1)
+            100,                 // Кількість променів
             Math.PI / 3,        // Поле зору (в радіанах, тут 60°)
+            this.worldObjects,       // Масив світла
+            true                // Світло прив'язане до гравця
+        );
+
+        new ClassLight(
+            0,                  // Початкова X-координата (ігнорується, якщо onplayer = true)
+            0,                  // Початкова Y-координата (ігнорується, якщо onplayer = true)
+            0,
+            100,                // Радіус світла
+            0.1,                  // Сила світла (від 0 до 1)
+            20,                 // Кількість променів
+            Math.PI * 2,        // Поле зору (в радіанах, тут 60°)
             this.worldObjects,       // Масив світла
             true                // Світло прив'язане до гравця
         );
@@ -386,7 +531,7 @@ class Game {
             300,                // Y-координата
             0,
             200,                // Радіус світла
-            0.2,                // Сила світла
+            0.1,                // Сила світла
             20,                 // Кількість променів
             Math.PI * 2,        // Поле зору (в радіанах, тут 45°)
             this.worldObjects,       // Масив світла
